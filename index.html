@@ -2,56 +2,67 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto Rotation Engine</title>
+    <title>Crypto Growth Engine</title>
     <style>
         body { font-family: -apple-system, sans-serif; background: #0e1117; color: white; padding: 20px; }
-        .card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 10px; border: 1px solid #333; }
-        input { width: 90%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: none; background: #262730; color: white; }
+        .card { background: #161616; padding: 20px; border-radius: 12px; margin-bottom: 15px; border-left: 4px solid #444; }
+        .input-group { margin-bottom: 20px; }
+        input { width: 100%; padding: 15px; border-radius: 8px; border: 1px solid #333; background: #1a1a1a; color: white; font-size: 16px; box-sizing: border-box; }
         .buy { color: #00ff00; font-weight: bold; }
-        .sell { color: #ff4b4b; font-weight: bold; }
-        .status { font-size: 0.8em; color: #888; }
+        .price { font-size: 1.2em; color: #00d4ff; }
     </style>
 </head>
 <body>
     <h2>Rotation Engine (IDR)</h2>
-    <input type="number" id="capital" placeholder="Total Modal (IDR)" oninput="update()">
-    <input type="number" id="fee" placeholder="Fee + Spread (%) misal: 1.5" value="1.5" oninput="update()">
+    
+    <div class="input-group">
+        <label>Total Modal (IDR):</label>
+        <input type="text" id="capital" placeholder="Contoh: 1.000.000" oninput="formatAndCalc(this)">
+    </div>
+    <div class="input-group">
+        <label>Fee + Spread (%):</label>
+        <input type="number" id="fee" value="1.5" oninput="update()">
+    </div>
+
     <div id="dashboard"></div>
 
     <script>
+        // Fungsi memformat input ribuan
+        function formatAndCalc(input) {
+            let value = input.value.replace(/\D/g, ""); // Hapus karakter non-digit
+            input.value = value.replace(/\B(?=(\d{3})+(?!\d))/g, "."); // Tambah titik
+            update();
+        }
+
         const assets = {
-            "bitcoin": { name: "BTC", weight: 0.40, target: 0 },
-            "ethereum": { name: "ETH", weight: 0.25, target: 0 },
-            "solana": { name: "SOL", weight: 0.15, target: 0 },
-            "bittensor": { name: "TAO", weight: 0.20, target: 0 }
+            "bitcoin": { name: "BTC", weight: 0.40 },
+            "ethereum": { name: "ETH", weight: 0.25 },
+            "solana": { name: "SOL", weight: 0.15 },
+            "bittensor": { name: "TAO", weight: 0.20 }
         };
 
         async function update() {
-            const capital = parseFloat(document.getElementById('capital').value);
-            const feeRate = parseFloat(document.getElementById('fee').value) / 100;
+            // Hapus titik untuk perhitungan
+            const rawCapital = document.getElementById('capital').value.replace(/\./g, "");
+            const capital = parseFloat(rawCapital);
+            const feeRate = parseFloat(document.getElementById('fee').value) / 100 || 0;
+            
             if (!capital) return;
 
             const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,bittensor&vs_currencies=idr');
             const data = await res.json();
             
-            let html = "<h3>Status Portofolio:</h3>";
+            let html = "";
             for (let id in assets) {
                 const rawPrice = data[id].idr;
-                // Hitung harga setelah kena fee/spread Pluang
                 const effectivePrice = rawPrice * (1 + feeRate);
-                const targetAllocation = capital * assets[id].weight;
+                const allocation = capital * assets[id].weight;
                 
-                // Signal Logic (Sederhana: Rebalancing)
-                const action = (rawPrice < (rawPrice * 0.95)) ? "BUY (Rebalance)" : "HOLD/Profit Harvest";
-                const signalClass = action.includes("BUY") ? "buy" : "sell";
-
                 html += `<div class='card'>
-                    <strong>${assets[id].name}</strong> <br>
-                    Harga: Rp${rawPrice.toLocaleString()} <br>
-                    <span class='status'>Efektif (Incl. Fee): Rp${effectivePrice.toLocaleString()}</span><br>
-                    Alokasi Target: Rp${targetAllocation.toLocaleString()}<br>
-                    Signal: <span class='${signalClass}'>${action}</span>
+                    <strong>${assets[id].name}</strong><br>
+                    <span class='price'>Rp${rawPrice.toLocaleString('id-ID')}</span><br>
+                    <small>Alokasi: Rp${allocation.toLocaleString('id-ID')}</small><br>
+                    Status: <span class='buy'>READY</span>
                 </div>`;
             }
             document.getElementById('dashboard').innerHTML = html;

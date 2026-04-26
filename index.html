@@ -1,207 +1,61 @@
-<!DOCTYPE html><html lang="en">
+<!DOCTYPE html>
+<html lang="id">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Crypto Rotation FINAL (IDR)</title>
-<style>
-body{font-family:Arial;background:#0f172a;color:#fff;text-align:center}
-.card{background:#1e293b;padding:15px;margin:10px;border-radius:10px}
-.active{border:2px solid #22c55e}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Rotation Engine</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; background: #0e1117; color: white; padding: 20px; }
+        .card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 10px; border: 1px solid #333; }
+        input { width: 90%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: none; background: #262730; color: white; }
+        .buy { color: #00ff00; font-weight: bold; }
+        .sell { color: #ff4b4b; font-weight: bold; }
+        .status { font-size: 0.8em; color: #888; }
+    </style>
 </head>
 <body>
-<h1>AI Crypto Rotation FINAL (IDR)</h1><div class="card">
-<input id="capital" type="number" value="800000">
-<button onclick="start()">Start</button>
-</div><div class="card">
-<h2 id="focus">TOP: -</h2>
-<h3 id="roi">ROI: 0%</h3>
-<h3 id="value">Rp0</h3>
-</div><div id="list"></div><script>
-const assets=["BTC/USDT","ETH/USDT","SOL/USDT","TAO/USDT"];
-const API_KEY="YOUR_TAAPI_KEY";
+    <h2>Rotation Engine (IDR)</h2>
+    <input type="number" id="capital" placeholder="Total Modal (IDR)" oninput="update()">
+    <input type="number" id="fee" placeholder="Fee + Spread (%) misal: 1.5" value="1.5" oninput="update()">
+    <div id="dashboard"></div>
 
-let portfolio={capital:0,current:0,entry:{},lastSwitch:0};
-let tradeLog=[];
+    <script>
+        const assets = {
+            "bitcoin": { name: "BTC", weight: 0.40, target: 0 },
+            "ethereum": { name: "ETH", weight: 0.25, target: 0 },
+            "solana": { name: "SOL", weight: 0.15, target: 0 },
+            "bittensor": { name: "TAO", weight: 0.20, target: 0 }
+        };
 
-const THRESHOLD=5;
-const COOLDOWN=60*60*1000;
-const PROFIT_LOCK=0.08;
+        async function update() {
+            const capital = parseFloat(document.getElementById('capital').value);
+            const feeRate = parseFloat(document.getElementById('fee').value) / 100;
+            if (!capital) return;
 
-function formatIDR(num){
- return "Rp" + Math.round(num).toLocaleString('id-ID');
-}
+            const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,bittensor&vs_currencies=idr');
+            const data = await res.json();
+            
+            let html = "<h3>Status Portofolio:</h3>";
+            for (let id in assets) {
+                const rawPrice = data[id].idr;
+                // Hitung harga setelah kena fee/spread Pluang
+                const effectivePrice = rawPrice * (1 + feeRate);
+                const targetAllocation = capital * assets[id].weight;
+                
+                // Signal Logic (Sederhana: Rebalancing)
+                const action = (rawPrice < (rawPrice * 0.95)) ? "BUY (Rebalance)" : "HOLD/Profit Harvest";
+                const signalClass = action.includes("BUY") ? "buy" : "sell";
 
-function start(){
- portfolio.capital=parseFloat(document.getElementById('capital').value);
- portfolio.current=portfolio.capital;
-}
-
-async function getRate(){
- try{
-  const res=await fetch("https://api.exchangerate-api.com/v4/latest/USD");
-  const data=await res.json();
-  return data.rates.IDR;
- }catch{
-  return 15000; // fallback
- }
-}
-
-async function fetchInd(symbol,rate){
- const map={
-  "BTC/USDT":"bitcoin",
-  "ETH/USDT":"ethereum",
-  "SOL/USDT":"solana",
-  "TAO/USDT":"bittensor"
- };
-
- let priceUSD=0;
-
- try{
-  const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${map[symbol]}&vs_currencies=usd`);
-  const data=await res.json();
-  priceUSD=data[map[symbol]].usd;
- }catch{}
-
- if(!priceUSD) return null;
-
- let price=priceUSD * rate;
-
- try{
-  const base="https://api.taapi.io";
-
-  const [mfi,stoch,bb]=await Promise.all([
-   fetch(`${base}/mfi?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json()),
-   fetch(`${base}/stochrsi?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json()),
-   fetch(`${base}/bbands?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json())
-  ]);
-
-  return {
-   price,
-   mfi:mfi.value,
-   stoch:stoch.valueFastK,
-   lower:bb.valueLowerBand * rate,
-   upper:bb.valueUpperBand * rate
-  };
- }catch{
-  return {
-   price,
-   mfi:50,
-   stoch:50,
-   lower:price*0.95,
-   upper:price*1.05
-  };
- }
-}
-
-function score(ind){
- let s=0;
- if(ind.mfi<30) s+=40;
- if(ind.stoch<30) s+=30;
- let pos=(ind.price-ind.lower)/(ind.upper-ind.lower);
- if(pos<0.25) s+=30;
- return s;
-}
-
-function getSignal(s){
- if(s>=80) return "STRONG BUY";
- if(s>=60) return "BUY";
- if(s>=40) return "WAIT";
- return "AVOID";
-}
-
-async function run(){
- let rate=await getRate();
- let data=[];
-
- for(let a of assets){
-  let ind=await fetchInd(a,rate);
-  if(ind){
-   let s=score(ind);
-   data.push({a,ind,s});
-  }
- }
-
- data.sort((x,y)=>y.s-x.s);
-
- let now=Date.now();
- let top1=data[0];
- let top2=data[1];
-
- if(now-portfolio.lastSwitch>COOLDOWN){
-  if(Math.abs(top1.s-top2.s)>THRESHOLD){
-   portfolio.lastSwitch=now;
-  }
- }
-
- let alloc={};
- alloc[top1.a]=0.6;
- alloc[top2.a]=0.3;
-
- for(let k in alloc){
-  if(!portfolio.entry[k]){
-   let price=data.find(d=>d.a===k).ind.price;
-   portfolio.entry[k]=price;
-
-   tradeLog.push({
-    asset:k,
-    action:"BUY",
-    price:price,
-    time:new Date().toLocaleString()
-   });
-  }
- }
-
- for(let k in portfolio.entry){
-  if(!alloc[k]) delete portfolio.entry[k];
- }
-
- let total=0;
-
- for(let d of data){
-  if(alloc[d.a]){
-   let change=(d.ind.price-portfolio.entry[d.a])/portfolio.entry[d.a];
-
-   if(change>PROFIT_LOCK) change=PROFIT_LOCK;
-
-   total+=portfolio.capital*alloc[d.a]*(1+change);
-  }
- }
-
- portfolio.current=total||portfolio.capital;
-
- let roi=((portfolio.current-portfolio.capital)/portfolio.capital)*100;
-
- document.getElementById('roi').innerText=`ROI: ${roi.toFixed(2)}%`;
- document.getElementById('value').innerText=formatIDR(portfolio.current);
- document.getElementById('focus').innerText=`TOP: ${top1.a}`;
-
- let html="";
-
- data.forEach((d,i)=>{
-  let signal=getSignal(d.s);
-
-  html+=`<div class='card ${i<2?'active':''}'>
-  <b>${d.a}</b>
-  <br>Price: ${formatIDR(d.ind.price)}
-  <br>Score: ${d.s}
-  <br>Signal: ${signal}
-  ${portfolio.entry[d.a]?`<br>BUY @ ${formatIDR(portfolio.entry[d.a])}`:""}
-  </div>`;
- });
-
- html+="<div class='card'><h3>Trade Log</h3>";
-
- tradeLog.slice(-5).forEach(t=>{
-  html+=`${t.time}<br>${t.asset} BUY @ ${formatIDR(t.price)}<hr>`;
- });
-
- html+="</div>";
-
- document.getElementById('list').innerHTML=html;
-}
-
-setInterval(run,60000);
-run();
-</script></body>
+                html += `<div class='card'>
+                    <strong>${assets[id].name}</strong> <br>
+                    Harga: Rp${rawPrice.toLocaleString()} <br>
+                    <span class='status'>Efektif (Incl. Fee): Rp${effectivePrice.toLocaleString()}</span><br>
+                    Alokasi Target: Rp${targetAllocation.toLocaleString()}<br>
+                    Signal: <span class='${signalClass}'>${action}</span>
+                </div>`;
+            }
+            document.getElementById('dashboard').innerHTML = html;
+        }
+    </script>
+</body>
 </html>

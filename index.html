@@ -1,0 +1,147 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Portfolio FINAL</title>
+  <style>
+    body { font-family: Arial; background:#0f172a; color:#fff; text-align:center; }
+    .card { background:#1e293b; padding:16px; margin:10px; border-radius:12px; }
+    .active { border:2px solid #22c55e; }
+  </style>
+</head>
+<body>
+  <h1>Final Tuned Rotation System</h1>  <div class="card">
+    <input id="capital" type="number" value="50" />
+    <button onclick="start()">Start</button>
+  </div>  <div class="card">
+    <h2 id="focus">TOP: -</h2>
+    <h3 id="roi">ROI: 0%</h3>
+    <h3 id="value">$0</h3>
+  </div>  <div id="list"></div><script>
+const assets = ["BTC/USDT","ETH/USDT","SOL/USDT","TAO/USDT"];
+const API_KEY = "YOUR_TAAPI_KEY";
+
+let portfolio = {
+  capital:0,
+  current:0,
+  entry:{},
+  lastSwitch:0
+};
+
+const THRESHOLD = 10; // anti-noise
+const COOLDOWN = 2 * 60 * 60 * 1000; // 2 jam
+const PROFIT_LOCK = 0.08; // 8%
+
+function start(){
+  portfolio.capital = parseFloat(document.getElementById('capital').value);
+  portfolio.current = portfolio.capital;
+}
+
+async function fetchInd(symbol){
+  const base = "https://api.taapi.io";
+  const [mfi, stoch, bb] = await Promise.all([
+    fetch(`${base}/mfi?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json()),
+    fetch(`${base}/stochrsi?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json()),
+    fetch(`${base}/bbands?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json())
+  ]);
+
+  return {
+    price: bb.value,
+    mfi: mfi.value,
+    stoch: stoch.valueFastK,
+    lower: bb.valueLowerBand,
+    upper: bb.valueUpperBand
+  };
+}
+
+function score(ind){
+  let s=0;
+  if(ind.mfi<25) s+=40;
+  if(ind.stoch<20) s+=30;
+  let pos=(ind.price-ind.lower)/(ind.upper-ind.lower);
+  if(pos<0.2) s+=30;
+  return s;
+}
+
+async function run(){
+  let data=[];
+
+  for(let a of assets){
+    try{
+      let ind=await fetchInd(a);
+      let s=score(ind);
+      data.push({a,ind,s});
+    }catch{
+      data.push({a,s:0});
+    }
+  }
+
+  data.sort((x,y)=>y.s-x.s);
+
+  let now = Date.now();
+
+  // Ambil top 2
+  let top1 = data[0];
+  let top2 = data[1];
+
+  // Anti-noise + cooldown
+  if(now - portfolio.lastSwitch < COOLDOWN){
+    // skip switching
+  } else {
+    if(Math.abs(top1.s - top2.s) > THRESHOLD){
+      portfolio.lastSwitch = now;
+    }
+  }
+
+  // Allocation
+  let alloc = {
+    [top1.a]:0.6,
+    [top2.a]:0.3
+  };
+
+  // Entry logic + reset
+  for(let k in alloc){
+    if(!portfolio.entry[k] && data.find(d=>d.a===k)?.ind){
+      portfolio.entry[k]=data.find(d=>d.a===k).ind.price;
+    }
+  }
+
+  // Remove old entries
+  for(let k in portfolio.entry){
+    if(!alloc[k]) delete portfolio.entry[k];
+  }
+
+  // Portfolio calc with profit lock
+  let total=0;
+
+  for(let d of data){
+    if(alloc[d.a] && d.ind){
+      let change=(d.ind.price-portfolio.entry[d.a])/portfolio.entry[d.a];
+
+      if(change > PROFIT_LOCK){
+        change = PROFIT_LOCK; // lock profit
+      }
+
+      total += portfolio.capital * alloc[d.a] * (1+change);
+    }
+  }
+
+  portfolio.current = total || portfolio.capital;
+
+  let roi=((portfolio.current-portfolio.capital)/portfolio.capital)*100;
+
+  document.getElementById('roi').innerText=`ROI: ${roi.toFixed(2)}%`;
+  document.getElementById('value').innerText=`$${portfolio.current.toFixed(2)}`;
+  document.getElementById('focus').innerText=`TOP: ${top1.a}`;
+
+  let html="";
+  data.forEach((d,i)=>{
+    html += `<div class='card ${i<2?'active':''}'>${d.a} | Score: ${d.s}</div>`;
+  });
+  document.getElementById('list').innerHTML=html;
+}
+
+setInterval(run,60000);
+run();
+</script></body>
+</html>

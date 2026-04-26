@@ -1,41 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Crypto Rotation FINAL</title>
+<style>
+body{font-family:Arial;background:#0f172a;color:#fff;text-align:center}
+.card{background:#1e293b;padding:15px;margin:10px;border-radius:10px}
+.active{border:2px solid #22c55e}
+</style>
+</head>
+<body>
+<h1>AI Crypto Rotation FINAL</h1>
+
+<div class="card">
+<input id="capital" type="number" value="50">
+<button onclick="start()">Start</button>
+</div>
+
+<div class="card">
+<h2 id="focus">TOP: -</h2>
+<h3 id="roi">ROI: 0%</h3>
+<h3 id="value">$0</h3>
+</div>
+
+<div id="list"></div>
+
+<script>
+const assets=["BTC/USDT","ETH/USDT","SOL/USDT","TAO/USDT"];
+const API_KEY="YOUR_TAAPI_KEY";
+
+let portfolio={capital:0,current:0,entry:{},lastSwitch:0};
+let tradeLog=[];
+
+const THRESHOLD=5;
+const COOLDOWN=60*60*1000;
+const PROFIT_LOCK=0.08;
+
+function start(){
+ portfolio.capital=parseFloat(document.getElementById('capital').value);
+ portfolio.current=portfolio.capital;
+}
+
+async function fetchInd(symbol){
+ const map={
+  "BTC/USDT":"bitcoin",
+  "ETH/USDT":"ethereum",
+  "SOL/USDT":"solana",
+  "TAO/USDT":"bittensor"
+ };
+
+ let price=0;
+
+ try{
+  const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${map[symbol]}&vs_currencies=usd`);
+  const data=await res.json();
+  price=data[map[symbol]].usd;
+ }catch{}
+
+ if(!price) return null;
+
+ try{
+  const base="https://api.taapi.io";
+
+  const [mfi,stoch,bb]=await Promise.all([
+   fetch(`${base}/mfi?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json()),
+   fetch(`${base}/stochrsi?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json()),
+   fetch(`${base}/bbands?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json())
+  ]);
+
+  return {
+   price,
+   mfi:mfi.value,
+   stoch:stoch.valueFastK,
+   lower:bb.valueLowerBand,
+   upper:bb.valueUpperBand
+  };
+ }catch{
+  return {
+   price,
+   mfi:50,
+   stoch:50,
+   lower:price*0.95,
+   upper:price*1.05
+  };
+ }
+}
+
+function score(ind){
+ let s=0;
+ if(ind.mfi<30) s+=40;
+ if(ind.stoch<30) s+=30;
+ let pos=(ind.price-ind.lower)/(ind.upper-ind.lower);
+ if(pos<0.25) s+=30;
+ return s;
+}
+
+function getSignal(s){
+ if(s>=80) return "STRONG BUY";
+ if(s>=60) return "BUY";
+ if(s>=40) return "WAIT";
+ return "AVOID";
+}
+
+async function run(){
+ let data=[];
+
+ for(let a of assets){
+  let ind=await fetchInd(a);
+  if(ind){
+   let s=score(ind);
+   data.push({a,ind,s});
   }
+ }
 
-  // Remove old entries
-  for(let k in portfolio.entry){
-    if(!alloc[k]) delete portfolio.entry[k];
+ data.sort((x,y)=>y.s-x.s);
+
+ let now=Date.now();
+ let top1=data[0];
+ let top2=data[1];
+
+ if(now-portfolio.lastSwitch>COOLDOWN){
+  if(Math.abs(top1.s-top2.s)>THRESHOLD){
+   portfolio.lastSwitch=now;
   }
+ }
 
-  // Portfolio calc with profit lock
-  let total=0;
+ let alloc={};
+ alloc[top1.a]=0.6;
+ alloc[top2.a]=0.3;
 
-  for(let d of data){
-    if(alloc[d.a] && d.ind){
-      let change=(d.ind.price-portfolio.entry[d.a])/portfolio.entry[d.a];
+ for(let k in alloc){
+  if(!portfolio.entry[k]){
+   let price=data.find(d=>d.a===k).ind.price;
+   portfolio.entry[k]=price;
 
-      if(change > PROFIT_LOCK){
-        change = PROFIT_LOCK; // lock profit
-      }
-
-      total += portfolio.capital * alloc[d.a] * (1+change);
-    }
+   tradeLog.push({
+    asset:k,
+    action:"BUY",
+    price:price,
+    time:new Date().toLocaleString()
+   });
   }
+ }
 
-  portfolio.current = total || portfolio.capital;
+ for(let k in portfolio.entry){
+  if(!alloc[k]) delete portfolio.entry[k];
+ }
 
-  let roi=((portfolio.current-portfolio.capital)/portfolio.capital)*100;
+ let total=0;
 
-  document.getElementById('roi').innerText=`ROI: ${roi.toFixed(2)}%`;
-  document.getElementById('value').innerText=`$${portfolio.current.toFixed(2)}`;
-  document.getElementById('focus').innerText=`TOP: ${top1.a}`;
+ for(let d of data){
+  if(alloc[d.a]){
+   let change=(d.ind.price-portfolio.entry[d.a])/portfolio.entry[d.a];
 
-  let html="";
-  data.forEach((d,i)=>{
-    html += `<div class='card ${i<2?'active':''}'>${d.a} | Score: ${d.s}</div>`;
-  });
-  document.getElementById('list').innerHTML=html;
+   if(change>PROFIT_LOCK) change=PROFIT_LOCK;
+
+   total+=portfolio.capital*alloc[d.a]*(1+change);
+  }
+ }
+
+ portfolio.current=total||portfolio.capital;
+
+ let roi=((portfolio.current-portfolio.capital)/portfolio.capital)*100;
+
+ document.getElementById('roi').innerText=`ROI: ${roi.toFixed(2)}%`;
+ document.getElementById('value').innerText=`$${portfolio.current.toFixed(2)}`;
+ document.getElementById('focus').innerText=`TOP: ${top1.a}`;
+
+ let html="";
+
+ data.forEach((d,i)=>{
+  let signal=getSignal(d.s);
+
+  html+=`<div class='card ${i<2?'active':''}'>
+  <b>${d.a}</b>
+  <br>Price: $${d.ind.price.toFixed(2)}
+  <br>Score: ${d.s}
+  <br>Signal: ${signal}
+  ${portfolio.entry[d.a]?`<br>BUY @ $${portfolio.entry[d.a].toFixed(2)}`:""}
+  </div>`;
+ });
+
+ html+="<div class='card'><h3>Trade Log</h3>";
+
+ tradeLog.slice(-5).forEach(t=>{
+  html+=`${t.time}<br>${t.asset} BUY @ $${t.price}<hr>`;
+ });
+
+ html+="</div>";
+
+ document.getElementById('list').innerHTML=html;
 }
 
 setInterval(run,60000);
 run();
-</script></body>
+</script>
+</body>
 </html>

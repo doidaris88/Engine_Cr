@@ -1,7 +1,121 @@
+<!DOCTYPE html><html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Crypto Rotation FINAL (IDR)</title>
+<style>
+body{font-family:Arial;background:#0f172a;color:#fff;text-align:center}
+.card{background:#1e293b;padding:15px;margin:10px;border-radius:10px}
+.active{border:2px solid #22c55e}
+</style>
+</head>
+<body>
+<h1>AI Crypto Rotation FINAL (IDR)</h1><div class="card">
+<input id="capital" type="number" value="800000">
+<button onclick="start()">Start</button>
+</div><div class="card">
+<h2 id="focus">TOP: -</h2>
+<h3 id="roi">ROI: 0%</h3>
+<h3 id="value">Rp0</h3>
+</div><div id="list"></div><script>
+const assets=["BTC/USDT","ETH/USDT","SOL/USDT","TAO/USDT"];
+const API_KEY="YOUR_TAAPI_KEY";
+
+let portfolio={capital:0,current:0,entry:{},lastSwitch:0};
+let tradeLog=[];
+
+const THRESHOLD=5;
+const COOLDOWN=60*60*1000;
+const PROFIT_LOCK=0.08;
+
+function formatIDR(num){
+ return "Rp" + Math.round(num).toLocaleString('id-ID');
+}
+
+function start(){
+ portfolio.capital=parseFloat(document.getElementById('capital').value);
+ portfolio.current=portfolio.capital;
+}
+
+async function getRate(){
+ try{
+  const res=await fetch("https://api.exchangerate-api.com/v4/latest/USD");
+  const data=await res.json();
+  return data.rates.IDR;
+ }catch{
+  return 15000; // fallback
+ }
+}
+
+async function fetchInd(symbol,rate){
+ const map={
+  "BTC/USDT":"bitcoin",
+  "ETH/USDT":"ethereum",
+  "SOL/USDT":"solana",
+  "TAO/USDT":"bittensor"
+ };
+
+ let priceUSD=0;
+
+ try{
+  const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${map[symbol]}&vs_currencies=usd`);
+  const data=await res.json();
+  priceUSD=data[map[symbol]].usd;
+ }catch{}
+
+ if(!priceUSD) return null;
+
+ let price=priceUSD * rate;
+
+ try{
+  const base="https://api.taapi.io";
+
+  const [mfi,stoch,bb]=await Promise.all([
+   fetch(`${base}/mfi?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json()),
+   fetch(`${base}/stochrsi?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json()),
+   fetch(`${base}/bbands?secret=${API_KEY}&exchange=binance&symbol=${symbol}&interval=1h`).then(r=>r.json())
+  ]);
+
+  return {
+   price,
+   mfi:mfi.value,
+   stoch:stoch.valueFastK,
+   lower:bb.valueLowerBand * rate,
+   upper:bb.valueUpperBand * rate
+  };
+ }catch{
+  return {
+   price,
+   mfi:50,
+   stoch:50,
+   lower:price*0.95,
+   upper:price*1.05
+  };
+ }
+}
+
+function score(ind){
+ let s=0;
+ if(ind.mfi<30) s+=40;
+ if(ind.stoch<30) s+=30;
+ let pos=(ind.price-ind.lower)/(ind.upper-ind.lower);
+ if(pos<0.25) s+=30;
+ return s;
+}
+
+function getSignal(s){
+ if(s>=80) return "STRONG BUY";
+ if(s>=60) return "BUY";
+ if(s>=40) return "WAIT";
+ return "AVOID";
+}
+
+async function run(){
+ let rate=await getRate();
  let data=[];
 
  for(let a of assets){
-  let ind=await fetchInd(a);
+  let ind=await fetchInd(a,rate);
   if(ind){
    let s=score(ind);
    data.push({a,ind,s});
@@ -59,7 +173,7 @@
  let roi=((portfolio.current-portfolio.capital)/portfolio.capital)*100;
 
  document.getElementById('roi').innerText=`ROI: ${roi.toFixed(2)}%`;
- document.getElementById('value').innerText=`$${portfolio.current.toFixed(2)}`;
+ document.getElementById('value').innerText=formatIDR(portfolio.current);
  document.getElementById('focus').innerText=`TOP: ${top1.a}`;
 
  let html="";
@@ -69,17 +183,17 @@
 
   html+=`<div class='card ${i<2?'active':''}'>
   <b>${d.a}</b>
-  <br>Price: $${d.ind.price.toFixed(2)}
+  <br>Price: ${formatIDR(d.ind.price)}
   <br>Score: ${d.s}
   <br>Signal: ${signal}
-  ${portfolio.entry[d.a]?`<br>BUY @ $${portfolio.entry[d.a].toFixed(2)}`:""}
+  ${portfolio.entry[d.a]?`<br>BUY @ ${formatIDR(portfolio.entry[d.a])}`:""}
   </div>`;
  });
 
  html+="<div class='card'><h3>Trade Log</h3>";
 
  tradeLog.slice(-5).forEach(t=>{
-  html+=`${t.time}<br>${t.asset} BUY @ $${t.price}<hr>`;
+  html+=`${t.time}<br>${t.asset} BUY @ ${formatIDR(t.price)}<hr>`;
  });
 
  html+="</div>";
@@ -89,6 +203,5 @@
 
 setInterval(run,60000);
 run();
-</script>
-</body>
+</script></body>
 </html>
